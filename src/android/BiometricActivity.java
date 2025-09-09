@@ -7,6 +7,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -20,6 +21,8 @@ import javax.crypto.Cipher;
 public class BiometricActivity extends AppCompatActivity {
 
     private static final int REQUEST_CODE_CONFIRM_DEVICE_CREDENTIALS = 2;
+    // Treat "no events" during this window as a failed attempt (covers face UIs with sparse callbacks)
+    private static final int DEFAULT_ATTEMPT_WINDOW_MS = 8000;
     private PromptInfo mPromptInfo;
     private CryptographyManager mCryptographyManager;
     private static final String SECRET_KEY = "__aio_secret_key";
@@ -28,6 +31,8 @@ public class BiometricActivity extends AppCompatActivity {
     private boolean mLaunchingDeviceCredential = false;
     private boolean mSuppressCancelError = false; // ignore ERROR_CANCELED while we're handing off to Keyguard
     private int mFailedAttempts = 0; // counts both face + fingerprint failures
+    private long mLastEventAt = 0L;
+    private Runnable mAttemptWatchdog = null;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -77,10 +82,12 @@ public class BiometricActivity extends AppCompatActivity {
         Cipher cipher = mCryptographyManager
                 .getInitializedCipherForEncryption(SECRET_KEY, invalidateOnEnrollment, this);
         mBiometricPrompt.authenticate(createPromptInfo(), new BiometricPrompt.CryptoObject(cipher));
+        startAttemptWatchdog();
     }
 
     private void justAuthenticate() {
         mBiometricPrompt.authenticate(createPromptInfo());
+        startAttemptWatchdog();
     }
 
     private void authenticateToDecrypt() throws CryptoException {
@@ -88,6 +95,24 @@ public class BiometricActivity extends AppCompatActivity {
         Cipher cipher = mCryptographyManager
                 .getInitializedCipherForDecryption(SECRET_KEY, initializationVector, this);
         mBiometricPrompt.authenticate(createPromptInfo(), new BiometricPrompt.CryptoObject(cipher));
+        startAttemptWatchdog();
+    }
+
+    private void recordProgress() { mLastEventAt = SystemClock.uptimeMillis(); }
+    private void startAttemptWatchdog() {
+        recordProgress();
+        if (mAttemptWatchdog == null) mAttemptWatchdog = this::watchdogTick;
+        mUi.postDelayed(mAttemptWatchdog, DEFAULT_ATTEMPT_WINDOW_MS);
+    }
+    private void stopAttemptWatchdog() { if (mAttemptWatchdog != null) mUi.removeCallbacks(mAttemptWatchdog); }
+    private void watchdogTick() {
+        long now = SystemClock.uptimeMillis();
+        if (now - mLastEventAt >= DEFAULT_ATTEMPT_WINDOW_MS) {
+            // Treat silent period as a failed attempt (face scan "no face detected" loops)
+            mAuthenticationCallback.onAuthenticationFailed();
+            return;
+        }
+        mUi.postDelayed(mAttemptWatchdog, DEFAULT_ATTEMPT_WINDOW_MS);
     }
 
     private BiometricPrompt.PromptInfo createPromptInfo() {
@@ -119,12 +144,14 @@ public class BiometricActivity extends AppCompatActivity {
                 @Override
                 public void onAuthenticationError(int errorCode, @NonNull CharSequence errString) {
                     super.onAuthenticationError(errorCode, errString);
+                    recordProgress();
                     onError(errorCode, errString);
                 }
 
                 @Override
                 public void onAuthenticationSucceeded(@NonNull BiometricPrompt.AuthenticationResult result) {
                     super.onAuthenticationSucceeded(result);
+                    stopAttemptWatchdog();
                     try {
                         finishWithSuccess(result.getCryptoObject());
                     } catch (CryptoException e) {
@@ -135,14 +162,16 @@ public class BiometricActivity extends AppCompatActivity {
                 @Override
                 public void onAuthenticationFailed() {
                     super.onAuthenticationFailed();
+                    recordProgress();
                     mFailedAttempts++;
                     int limit = mPromptInfo.getMaxAttempts();
                     if (limit > 0 && mFailedAttempts >= limit) {
                         if (mPromptInfo.isDeviceCredentialAllowed()) {
-                mSuppressCancelError = true;
+                            mSuppressCancelError = true;
                             try { mBiometricPrompt.cancelAuthentication(); } catch (Exception ignored) {}
                             mUi.postDelayed(BiometricActivity.this::launchDeviceCredential, 200);
                         } else {
+                            stopAttemptWatchdog();
                             finishWithError(PluginError.BIOMETRIC_LOCKED_OUT);
                         }
                     }
@@ -165,6 +194,7 @@ public class BiometricActivity extends AppCompatActivity {
                 .createConfirmDeviceCredentialIntent(mPromptInfo.getTitle(), mPromptInfo.getDescription());
         if (intent != null) {
             mLaunchingDeviceCredential = true; // already transitioning
+            stopAttemptWatchdog();
             this.startActivityForResult(intent, REQUEST_CODE_CONFIRM_DEVICE_CREDENTIALS);
         } else {
             finishWithError(PluginError.BIOMETRIC_UNKNOWN_ERROR);
@@ -182,6 +212,7 @@ public class BiometricActivity extends AppCompatActivity {
             // We're done with the handoff; re-enable normal cancel handling.
             mLaunchingDeviceCredential = false;
             mSuppressCancelError = false;
+            stopAttemptWatchdog();
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
@@ -196,9 +227,14 @@ public class BiometricActivity extends AppCompatActivity {
                 if (mSuppressCancelError || mLaunchingDeviceCredential) {
                     return;
                 } else {
+                    stopAttemptWatchdog();
                     finishWithError(PluginError.BIOMETRIC_DISMISSED);
                     return;
                 }
+            case BiometricPrompt.ERROR_TIMEOUT:
+                // Progress face auth toward fallback on timeouts as well
+                mAuthenticationCallback.onAuthenticationFailed();
+                return;
             case BiometricPrompt.ERROR_NEGATIVE_BUTTON:
                 if (mPromptInfo.isDeviceCredentialAllowed()) {
                     mSuppressCancelError = true;
@@ -219,12 +255,15 @@ public class BiometricActivity extends AppCompatActivity {
                     return;
                 }
                 if (errorCode == BiometricPrompt.ERROR_LOCKOUT) {
+                    stopAttemptWatchdog();
                     finishWithError(PluginError.BIOMETRIC_LOCKED_OUT.getValue(), errString.toString());
                 } else {
+                    stopAttemptWatchdog();
                     finishWithError(PluginError.BIOMETRIC_LOCKED_OUT_PERMANENT.getValue(), errString.toString());
                 }
                 return;
             default:
+                stopAttemptWatchdog();
                 finishWithError(errorCode, errString.toString());
         }
     }
