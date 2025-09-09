@@ -26,6 +26,7 @@ public class BiometricActivity extends AppCompatActivity {
     private BiometricPrompt mBiometricPrompt;
     private final Handler mUi = new Handler(Looper.getMainLooper());
     private boolean mLaunchingDeviceCredential = false;
+    private boolean mSuppressCancelError = false; // ignore ERROR_CANCELED while we're handing off to Keyguard
     private int mFailedAttempts = 0; // counts both face + fingerprint failures
 
     @Override
@@ -138,6 +139,7 @@ public class BiometricActivity extends AppCompatActivity {
                     int limit = mPromptInfo.getMaxAttempts();
                     if (limit > 0 && mFailedAttempts >= limit) {
                         if (mPromptInfo.isDeviceCredentialAllowed()) {
+                mSuppressCancelError = true;
                             try { mBiometricPrompt.cancelAuthentication(); } catch (Exception ignored) {}
                             mUi.postDelayed(BiometricActivity.this::launchDeviceCredential, 200);
                         } else {
@@ -162,7 +164,7 @@ public class BiometricActivity extends AppCompatActivity {
         Intent intent = keyguardManager
                 .createConfirmDeviceCredentialIntent(mPromptInfo.getTitle(), mPromptInfo.getDescription());
         if (intent != null) {
-            mLaunchingDeviceCredential = true;
+            mLaunchingDeviceCredential = true; // already transitioning
             this.startActivityForResult(intent, REQUEST_CODE_CONFIRM_DEVICE_CREDENTIALS);
         } else {
             finishWithError(PluginError.BIOMETRIC_UNKNOWN_ERROR);
@@ -177,8 +179,12 @@ public class BiometricActivity extends AppCompatActivity {
             } else {
                 finishWithError(PluginError.BIOMETRIC_PIN_OR_PATTERN_DISMISSED);
             }
+            // We're done with the handoff; re-enable normal cancel handling.
             mLaunchingDeviceCredential = false;
+            mSuppressCancelError = false;
+            return;
         }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     private void onError(int errorCode, @NonNull CharSequence errString) {
@@ -186,10 +192,16 @@ public class BiometricActivity extends AppCompatActivity {
         switch (errorCode) {
             case BiometricPrompt.ERROR_USER_CANCELED:
             case BiometricPrompt.ERROR_CANCELED:
-                finishWithError(PluginError.BIOMETRIC_DISMISSED);
-                return;
+                // If we intentionally canceled to launch Keyguard, ignore this edge callback.
+                if (mSuppressCancelError || mLaunchingDeviceCredential) {
+                    return;
+                } else {
+                    finishWithError(PluginError.BIOMETRIC_DISMISSED);
+                    return;
+                }
             case BiometricPrompt.ERROR_NEGATIVE_BUTTON:
                 if (mPromptInfo.isDeviceCredentialAllowed()) {
+                    mSuppressCancelError = true;
                     try { mBiometricPrompt.cancelAuthentication(); } catch (Exception ignored) {}
                     mUi.postDelayed(BiometricActivity.this::launchDeviceCredential, 200);
                     return;
@@ -200,6 +212,7 @@ public class BiometricActivity extends AppCompatActivity {
             case BiometricPrompt.ERROR_LOCKOUT_PERMANENT:
                 if (mPromptInfo.isDeviceCredentialAllowed()) {
                     if (!mLaunchingDeviceCredential) {
+                        mSuppressCancelError = true;
                         try { mBiometricPrompt.cancelAuthentication(); } catch (Exception ignored) {}
                         mUi.postDelayed(BiometricActivity.this::launchDeviceCredential, 200);
                     }
