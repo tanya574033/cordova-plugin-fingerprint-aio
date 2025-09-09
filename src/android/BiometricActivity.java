@@ -24,6 +24,9 @@ public class BiometricActivity extends AppCompatActivity {
     private CryptographyManager mCryptographyManager;
     private static final String SECRET_KEY = "__aio_secret_key";
     private BiometricPrompt mBiometricPrompt;
+    private final Handler mUi = new Handler(Looper.getMainLooper());
+    private boolean mLaunchingDeviceCredential = false;
+    private int mFailedAttempts = 0; // counts both face + fingerprint failures
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -93,10 +96,18 @@ public class BiometricActivity extends AppCompatActivity {
                 .setConfirmationRequired(mPromptInfo.getConfirmationRequired())
                 .setDescription(mPromptInfo.getDescription());
 
-        String negativeText = mPromptInfo.isDeviceCredentialAllowed()
-                ? mPromptInfo.getFallbackButtonTitle()
-                : mPromptInfo.getCancelButtonTitle();
-        promptInfoBuilder.setNegativeButtonText(negativeText);
+        if (mPromptInfo.isDeviceCredentialAllowed()
+                && mPromptInfo.getType() == BiometricActivityType.JUST_AUTHENTICATE
+                && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            // NOTE: This mode forbids a negative button.
+            //noinspection deprecation
+            promptInfoBuilder.setDeviceCredentialAllowed(true);
+        } else {
+            String negativeText = mPromptInfo.isDeviceCredentialAllowed()
+                    ? mPromptInfo.getFallbackButtonTitle()
+                    : mPromptInfo.getCancelButtonTitle();
+            promptInfoBuilder.setNegativeButtonText(negativeText);
+        }
 
         return promptInfoBuilder.build();
     }
@@ -123,7 +134,16 @@ public class BiometricActivity extends AppCompatActivity {
                 @Override
                 public void onAuthenticationFailed() {
                     super.onAuthenticationFailed();
-                    //onError(PluginError.BIOMETRIC_AUTHENTICATION_FAILED.getValue(), PluginError.BIOMETRIC_AUTHENTICATION_FAILED.getMessage());
+                    mFailedAttempts++;
+                    int limit = mPromptInfo.getMaxAttempts();
+                    if (limit > 0 && mFailedAttempts >= limit) {
+                        if (mPromptInfo.isDeviceCredentialAllowed()) {
+                            try { mBiometricPrompt.cancelAuthentication(); } catch (Exception ignored) {}
+                            mUi.postDelayed(BiometricActivity.this::launchDeviceCredential, 200);
+                        } else {
+                            finishWithError(PluginError.BIOMETRIC_LOCKED_OUT);
+                        }
+                    }
                 }
             };
 
@@ -142,6 +162,7 @@ public class BiometricActivity extends AppCompatActivity {
         Intent intent = keyguardManager
                 .createConfirmDeviceCredentialIntent(mPromptInfo.getTitle(), mPromptInfo.getDescription());
         if (intent != null) {
+            mLaunchingDeviceCredential = true;
             this.startActivityForResult(intent, REQUEST_CODE_CONFIRM_DEVICE_CREDENTIALS);
         } else {
             finishWithError(PluginError.BIOMETRIC_UNKNOWN_ERROR);
@@ -156,6 +177,7 @@ public class BiometricActivity extends AppCompatActivity {
             } else {
                 finishWithError(PluginError.BIOMETRIC_PIN_OR_PATTERN_DISMISSED);
             }
+            mLaunchingDeviceCredential = false;
         }
     }
 
@@ -168,7 +190,8 @@ public class BiometricActivity extends AppCompatActivity {
                 return;
             case BiometricPrompt.ERROR_NEGATIVE_BUTTON:
                 if (mPromptInfo.isDeviceCredentialAllowed()) {
-                    launchDeviceCredential();
+                    try { mBiometricPrompt.cancelAuthentication(); } catch (Exception ignored) {}
+                    mUi.postDelayed(BiometricActivity.this::launchDeviceCredential, 200);
                     return;
                 }
                 finishWithError(PluginError.BIOMETRIC_DISMISSED);
@@ -176,7 +199,10 @@ public class BiometricActivity extends AppCompatActivity {
             case BiometricPrompt.ERROR_LOCKOUT:
             case BiometricPrompt.ERROR_LOCKOUT_PERMANENT:
                 if (mPromptInfo.isDeviceCredentialAllowed()) {
-                    launchDeviceCredential();
+                    if (!mLaunchingDeviceCredential) {
+                        try { mBiometricPrompt.cancelAuthentication(); } catch (Exception ignored) {}
+                        mUi.postDelayed(BiometricActivity.this::launchDeviceCredential, 200);
+                    }
                     return;
                 }
                 if (errorCode == BiometricPrompt.ERROR_LOCKOUT) {
