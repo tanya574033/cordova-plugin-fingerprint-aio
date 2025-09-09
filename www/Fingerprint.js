@@ -3,6 +3,20 @@
 var Fingerprint = function() {
 };
 
+function prepareParams (options) {
+  options = options || {};
+  if (typeof options.disableBackup === "undefined") options.disableBackup = false;
+
+  // Android only customization
+  if (!options.fallbackButtonTitle) options.fallbackButtonTitle = "Use backup";
+  if (!options.cancelButtonTitle) options.cancelButtonTitle = "Cancel";
+  if (!options.title) options.title = "";
+  if (!options.subtitle) options.subtitle = "";
+  if (!options.description) options.description = "";
+
+  return options;
+}
+
 // Plugin Errors
 Fingerprint.prototype.BIOMETRIC_UNKNOWN_ERROR = -100;
 Fingerprint.prototype.BIOMETRIC_UNAVAILABLE = -101;
@@ -25,6 +39,7 @@ Fingerprint.prototype.BIOMETRIC_TYPE_FACE = "face";
 Fingerprint.prototype.BIOMETRIC_TYPE_COMMON = "biometric";
 
 Fingerprint.prototype.show = function (params, successCallback, errorCallback) {
+  params = prepareParams(params);
   cordova.exec(
     successCallback,
     errorCallback,
@@ -45,6 +60,7 @@ Fingerprint.prototype.isAvailable = function (successCallback, errorCallback, op
 };
 
 Fingerprint.prototype.registerBiometricSecret = function (params, successCallback, errorCallback) {
+  params = prepareParams(params);
   cordova.exec(
       successCallback,
       errorCallback,
@@ -55,6 +71,7 @@ Fingerprint.prototype.registerBiometricSecret = function (params, successCallbac
 };
 
 Fingerprint.prototype.loadBiometricSecret = function (params, successCallback, errorCallback) {
+  params = prepareParams(params);
   cordova.exec(
       successCallback,
       errorCallback,

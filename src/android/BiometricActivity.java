@@ -93,13 +93,11 @@ public class BiometricActivity extends AppCompatActivity {
                 .setConfirmationRequired(mPromptInfo.getConfirmationRequired())
                 .setDescription(mPromptInfo.getDescription());
 
-        if (mPromptInfo.isDeviceCredentialAllowed()
-                && mPromptInfo.getType() == BiometricActivityType.JUST_AUTHENTICATE
-                && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) { // TODO: remove after fix https://issuetracker.google.com/issues/142740104
-            promptInfoBuilder.setDeviceCredentialAllowed(true);
-        } else {
-            promptInfoBuilder.setNegativeButtonText(mPromptInfo.getCancelButtonTitle());
-        }
+        String negativeText = mPromptInfo.isDeviceCredentialAllowed()
+                ? mPromptInfo.getFallbackButtonTitle()
+                : mPromptInfo.getCancelButtonTitle();
+        promptInfoBuilder.setNegativeButtonText(negativeText);
+
         return promptInfoBuilder.build();
     }
 
@@ -129,26 +127,27 @@ public class BiometricActivity extends AppCompatActivity {
                 }
             };
 
-
-    // TODO: remove after fix https://issuetracker.google.com/issues/142740104
-    private void showAuthenticationScreen() {
+    private void launchDeviceCredential() {
         KeyguardManager keyguardManager = ContextCompat
                 .getSystemService(this, KeyguardManager.class);
         if (keyguardManager == null
-                || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.LOLLIPOP) {
+                || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            finishWithError(PluginError.BIOMETRIC_UNKNOWN_ERROR);
             return;
         }
-        if (keyguardManager.isKeyguardSecure()) {
-            Intent intent = keyguardManager
-                    .createConfirmDeviceCredentialIntent(mPromptInfo.getTitle(), mPromptInfo.getDescription());
+        if (!keyguardManager.isKeyguardSecure()) {
+            finishWithError(PluginError.BIOMETRIC_SCREEN_GUARD_UNSECURED);
+            return;
+        }
+        Intent intent = keyguardManager
+                .createConfirmDeviceCredentialIntent(mPromptInfo.getTitle(), mPromptInfo.getDescription());
+        if (intent != null) {
             this.startActivityForResult(intent, REQUEST_CODE_CONFIRM_DEVICE_CREDENTIALS);
         } else {
-            // Show a message that the user hasn't set up a lock screen.
-            finishWithError(PluginError.BIOMETRIC_SCREEN_GUARD_UNSECURED);
+            finishWithError(PluginError.BIOMETRIC_UNKNOWN_ERROR);
         }
     }
 
-    // TODO: remove after fix https://issuetracker.google.com/issues/142740104
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == REQUEST_CODE_CONFIRM_DEVICE_CREDENTIALS) {
@@ -162,26 +161,30 @@ public class BiometricActivity extends AppCompatActivity {
 
     private void onError(int errorCode, @NonNull CharSequence errString) {
 
-        switch (errorCode)
-        {
+        switch (errorCode) {
             case BiometricPrompt.ERROR_USER_CANCELED:
             case BiometricPrompt.ERROR_CANCELED:
                 finishWithError(PluginError.BIOMETRIC_DISMISSED);
                 return;
             case BiometricPrompt.ERROR_NEGATIVE_BUTTON:
-                // TODO: remove after fix https://issuetracker.google.com/issues/142740104
-                if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P && mPromptInfo.isDeviceCredentialAllowed()) {
-                    showAuthenticationScreen();
+                if (mPromptInfo.isDeviceCredentialAllowed()) {
+                    launchDeviceCredential();
                     return;
                 }
                 finishWithError(PluginError.BIOMETRIC_DISMISSED);
-                break;
+                return;
             case BiometricPrompt.ERROR_LOCKOUT:
-                finishWithError(PluginError.BIOMETRIC_LOCKED_OUT.getValue(), errString.toString());
-                break;
             case BiometricPrompt.ERROR_LOCKOUT_PERMANENT:
-                finishWithError(PluginError.BIOMETRIC_LOCKED_OUT_PERMANENT.getValue(), errString.toString());
-                break;
+                if (mPromptInfo.isDeviceCredentialAllowed()) {
+                    launchDeviceCredential();
+                    return;
+                }
+                if (errorCode == BiometricPrompt.ERROR_LOCKOUT) {
+                    finishWithError(PluginError.BIOMETRIC_LOCKED_OUT.getValue(), errString.toString());
+                } else {
+                    finishWithError(PluginError.BIOMETRIC_LOCKED_OUT_PERMANENT.getValue(), errString.toString());
+                }
+                return;
             default:
                 finishWithError(errorCode, errString.toString());
         }
