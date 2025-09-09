@@ -12,6 +12,7 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.biometric.BiometricPrompt;
 import androidx.core.content.ContextCompat;
+import android.util.Log;
 
 import java.util.concurrent.Executor;
 
@@ -28,7 +29,8 @@ public class BiometricActivity extends AppCompatActivity {
     private boolean mLaunchingDeviceCredential = false;
     private boolean mSuppressCancelError = false; // ignore ERROR_CANCELED while we're handing off to Keyguard
     private int mFailedAttempts = 0; // counts both face + fingerprint failures
-
+    private static final String TAG = "FAIO";
+    
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -118,6 +120,7 @@ public class BiometricActivity extends AppCompatActivity {
 
                 @Override
                 public void onAuthenticationError(int errorCode, @NonNull CharSequence errString) {
+                        Log.d(TAG, "onError code=" + errorCode + " msg=" + String.valueOf(errString) + " launchingKeyguard=" + mLaunchingDeviceCredential + " suppress=" + mSuppressCancelError);
                     super.onAuthenticationError(errorCode, errString);
                     onError(errorCode, errString);
                 }
@@ -134,12 +137,15 @@ public class BiometricActivity extends AppCompatActivity {
 
                 @Override
                 public void onAuthenticationFailed() {
+                    Log.d(TAG, "failed++ -> " + (mFailedAttempts+1) + " / limit=" + mPromptInfo.getMaxAttempts());
+                    
                     super.onAuthenticationFailed();
                     mFailedAttempts++;
                     int limit = mPromptInfo.getMaxAttempts();
                     if (limit > 0 && mFailedAttempts >= limit) {
+                        Log.d(TAG, "limit reached -> cancel & launch Keyguard");
                         if (mPromptInfo.isDeviceCredentialAllowed()) {
-                mSuppressCancelError = true;
+                            mSuppressCancelError = true;
                             try { mBiometricPrompt.cancelAuthentication(); } catch (Exception ignored) {}
                             mUi.postDelayed(BiometricActivity.this::launchDeviceCredential, 200);
                         } else {
@@ -150,6 +156,7 @@ public class BiometricActivity extends AppCompatActivity {
             };
 
     private void launchDeviceCredential() {
+        Log.d(TAG, "launchDeviceCredential()");
         KeyguardManager keyguardManager = ContextCompat
                 .getSystemService(this, KeyguardManager.class);
         if (keyguardManager == null
@@ -174,6 +181,7 @@ public class BiometricActivity extends AppCompatActivity {
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == REQUEST_CODE_CONFIRM_DEVICE_CREDENTIALS) {
+            Log.d(TAG, "Keyguard result=" + (resultCode == Activity.RESULT_OK ? "OK" : "CANCELED"));
             if (resultCode == Activity.RESULT_OK) {
                 finishWithSuccess();
             } else {
