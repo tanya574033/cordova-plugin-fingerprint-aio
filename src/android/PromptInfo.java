@@ -63,7 +63,7 @@ class PromptInfo {
     }
 
     int getMaxAttempts() {
-        return bundle.getInt(MAX_ATTEMPTS);
+        return bundle.containsKey(MAX_ATTEMPTS) ? bundle.getInt(MAX_ATTEMPTS) : 5;
     }
 
     BiometricActivityType getType() {
