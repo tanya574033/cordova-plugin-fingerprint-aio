@@ -27,6 +27,7 @@
   "author": "Niklas Merz",
   "funding": "https://github.com/sponsors/NiklasMerz",
   "license": "MIT",
+  "types": "types/index.d.ts",
   "bugs": {
     "url": "https://github.com/niklasmerz/cordova-plugin-fingerprint-aio/issues"
   },
