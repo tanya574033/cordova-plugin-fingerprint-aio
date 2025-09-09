@@ -16,6 +16,7 @@ class PromptInfo {
     private static final String INVALIDATE_ON_ENROLLMENT = "invalidateOnEnrollment";
     private static final String SECRET = "secret";
     private static final String BIOMETRIC_ACTIVITY_TYPE = "biometricActivityType";
+    private static final String MAX_ATTEMPTS = "maxAttempts";
 
     static final String SECRET_EXTRA = "secret";
 
@@ -61,6 +62,10 @@ class PromptInfo {
         return bundle.getBoolean(INVALIDATE_ON_ENROLLMENT);
     }
 
+    int getMaxAttempts() {
+        return bundle.containsKey(MAX_ATTEMPTS) ? bundle.getInt(MAX_ATTEMPTS) : 5;
+    }
+
     BiometricActivityType getType() {
         return BiometricActivityType.fromValue(bundle.getInt(BIOMETRIC_ACTIVITY_TYPE));
     }
@@ -78,6 +83,7 @@ class PromptInfo {
         private boolean invalidateOnEnrollment = false;
         private String secret = null;
         private BiometricActivityType type = null;
+        private int maxAttempts = 5;
 
         Builder(String applicationLabel) {
             if (applicationLabel == null) {
@@ -110,6 +116,7 @@ class PromptInfo {
             bundle.putBoolean(CONFIRMATION_REQUIRED, this.confirmationRequired);
             bundle.putBoolean(INVALIDATE_ON_ENROLLMENT, this.invalidateOnEnrollment);
             bundle.putInt(BIOMETRIC_ACTIVITY_TYPE, this.type.getValue());
+            bundle.putInt(MAX_ATTEMPTS, this.maxAttempts);
             promptInfo.bundle = bundle;
 
             return promptInfo;
@@ -128,6 +135,7 @@ class PromptInfo {
             confirmationRequired = args.getBoolean(CONFIRMATION_REQUIRED, confirmationRequired);
             invalidateOnEnrollment = args.getBoolean(INVALIDATE_ON_ENROLLMENT, false);
             secret = args.getString(SECRET, null);
+            maxAttempts = args.getInt(MAX_ATTEMPTS, maxAttempts);
         }
     }
 }

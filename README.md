@@ -120,6 +120,20 @@ Fingerprint.show({
 * __disableBackup__: If `true` remove backup option on authentication dialogue. Default: `false`. This is useful if you want to implement your own fallback.
 * __confirmationRequired__ (**Android**): If `false` user confirmation is NOT required after a biometric has been authenticated . Default: `true`. See [docs](https://developer.android.com/training/sign-in/biometric-auth#no-explicit-user-action).
 
+* __maxAttempts__ (**Android**): Maximum number of **biometric failures** allowed **across all modalities
+  in the same prompt** (e.g., fingerprint 3 + face 2 = 5). Defaults to **5**.
+  - If backup is enabled (`disableBackup:false`) and the limit is reached, the plugin cancels the
+    biometric prompt and automatically opens the device credential screen (PIN/Pattern/Password).
+  - If backup is disabled and the limit is reached, the plugin returns `BIOMETRIC_LOCKED_OUT`.
+
+  Example:
+  ```ts
+  await FAIO.show({
+    clientId:'Demo', clientSecret:'secret',
+    disableBackup:false, maxAttempts:5
+  });
+  ```
+
 ### Android fallback behavior
 
 When `disableBackup` is `false` (the default) the biometric prompt shows a negative button labeled **Use backup**. Pressing it opens the system PIN, pattern or password screen. After too many failed biometric attempts the same screen opens automatically without additional taps. Users can always cancel authentication via the system back or close actions.
