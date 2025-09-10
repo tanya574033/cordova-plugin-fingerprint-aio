@@ -83,7 +83,8 @@ class PromptInfo {
         private boolean invalidateOnEnrollment = false;
         private String secret = null;
         private BiometricActivityType type = null;
-        private int maxAttempts = 5;
+        // Android: fixed shared limit across modalities
+        private int maxAttempts = 4;
 
         Builder(String applicationLabel) {
             if (applicationLabel == null) {
@@ -116,7 +117,8 @@ class PromptInfo {
             bundle.putBoolean(CONFIRMATION_REQUIRED, this.confirmationRequired);
             bundle.putBoolean(INVALIDATE_ON_ENROLLMENT, this.invalidateOnEnrollment);
             bundle.putInt(BIOMETRIC_ACTIVITY_TYPE, this.type.getValue());
-            bundle.putInt(MAX_ATTEMPTS, this.maxAttempts);
+            // Hard limit on Android
+            bundle.putInt(MAX_ATTEMPTS, 4);
             promptInfo.bundle = bundle;
 
             return promptInfo;
@@ -135,7 +137,8 @@ class PromptInfo {
             confirmationRequired = args.getBoolean(CONFIRMATION_REQUIRED, confirmationRequired);
             invalidateOnEnrollment = args.getBoolean(INVALIDATE_ON_ENROLLMENT, false);
             secret = args.getString(SECRET, null);
-            maxAttempts = args.getInt(MAX_ATTEMPTS, maxAttempts);
+            // Ignore incoming values on Android; enforce 4 attempts
+            maxAttempts = 4;
         }
     }
 }
