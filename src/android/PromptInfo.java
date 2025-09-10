@@ -68,7 +68,7 @@ class PromptInfo {
     }
 
     int getAttemptWindowMs() {
-        return bundle.getInt(ATTEMPT_WINDOW_MS);
+        return bundle.containsKey(ATTEMPT_WINDOW_MS) ? bundle.getInt(ATTEMPT_WINDOW_MS) : 1200;
     }
 
     BiometricActivityType getType() {
@@ -89,7 +89,7 @@ class PromptInfo {
         private String secret = null;
         private BiometricActivityType type = null;
         private int maxAttempts = 5;
-        private int attemptWindowMs = 0; // default OFF
+        private int attemptWindowMs = 1200; // default OFF
 
         Builder(String applicationLabel) {
             if (applicationLabel == null) {
