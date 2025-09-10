@@ -13,7 +13,6 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.biometric.BiometricPrompt;
 import androidx.core.content.ContextCompat;
 import android.util.Log;
-import android.os.SystemClock;
 
 import java.util.concurrent.Executor;
 
@@ -31,10 +30,8 @@ public class BiometricActivity extends AppCompatActivity {
     private boolean mSuppressCancelError = false; // ignore ERROR_CANCELED while we're handing off to Keyguard
     private int mFailedAttempts = 0; // counts both face + fingerprint failures
     private static final String TAG = "FAIO";
-    // Handoff guard (avoid double-Launching Keyguard), and optional watchdog state
+    // Handoff guard (avoid double-Launching Keyguard)
     private boolean mHandoffScheduled = false;
-    private long mLastEventAt = 0L;
-    private Runnable mAttemptWatchdog = null;
     
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -84,12 +81,10 @@ public class BiometricActivity extends AppCompatActivity {
         Cipher cipher = mCryptographyManager
                 .getInitializedCipherForEncryption(SECRET_KEY, invalidateOnEnrollment, this);
         mBiometricPrompt.authenticate(createPromptInfo(), new BiometricPrompt.CryptoObject(cipher));
-        startAttemptWatchdogIfNeeded();
     }
 
     private void justAuthenticate() {
         mBiometricPrompt.authenticate(createPromptInfo());
-        startAttemptWatchdogIfNeeded();
     }
 
     private void authenticateToDecrypt() throws CryptoException {
@@ -97,7 +92,6 @@ public class BiometricActivity extends AppCompatActivity {
         Cipher cipher = mCryptographyManager
                 .getInitializedCipherForDecryption(SECRET_KEY, initializationVector, this);
         mBiometricPrompt.authenticate(createPromptInfo(), new BiometricPrompt.CryptoObject(cipher));
-        startAttemptWatchdogIfNeeded();
     }
 
     private BiometricPrompt.PromptInfo createPromptInfo() {
@@ -132,14 +126,12 @@ public class BiometricActivity extends AppCompatActivity {
                                 + " launchingKeyguard=" + mLaunchingDeviceCredential
                                 + " suppress=" + mSuppressCancelError);
                     super.onAuthenticationError(errorCode, errString);
-                    recordProgress();
                     onError(errorCode, errString);
                 }
 
                 @Override
                 public void onAuthenticationSucceeded(@NonNull BiometricPrompt.AuthenticationResult result) {
                     super.onAuthenticationSucceeded(result);
-                    stopAttemptWatchdog();
                     try {
                         finishWithSuccess(result.getCryptoObject());
                     } catch (CryptoException e) {
@@ -149,10 +141,9 @@ public class BiometricActivity extends AppCompatActivity {
 
                 @Override
                 public void onAuthenticationFailed() {
-                    Log.d(TAG, "failed++ -> " + (mFailedAttempts+1) + " / limit=" + mPromptInfo.getMaxAttempts() + " / window=" + mPromptInfo.getAttemptWindowMs());
-                    
+                    Log.d(TAG, "failed++ -> " + (mFailedAttempts+1) + " / limit=" + mPromptInfo.getMaxAttempts());
+
                     super.onAuthenticationFailed();
-                    recordProgress();
                     mFailedAttempts++;
                     int limit = mPromptInfo.getMaxAttempts();
                     if (limit > 0 && mFailedAttempts >= limit) {
@@ -160,7 +151,6 @@ public class BiometricActivity extends AppCompatActivity {
                         if (mPromptInfo.isDeviceCredentialAllowed()) {
                             scheduleHandoffToKeyguard();
                         } else {
-                            stopAttemptWatchdog();
                             finishWithError(PluginError.BIOMETRIC_LOCKED_OUT);
                         }
                     }
@@ -180,34 +170,9 @@ public class BiometricActivity extends AppCompatActivity {
         }, 400);
         // Safety attempt in case some OEM face UIs are sticky
         mUi.postDelayed(() -> {
-            Log.d(TAG, "handoff->Keyguard t2 (watchdog)");
+            Log.d(TAG, "handoff->Keyguard t2");
             if (!mLaunchingDeviceCredential) launchDeviceCredential();
         }, 1200);
-    }
-
-    // --- Optional "silent-period" watchdog (disabled when attemptWindowMs == 0) ---
-    private void recordProgress() { mLastEventAt = SystemClock.uptimeMillis(); }
-    private void startAttemptWatchdogIfNeeded() {
-        int window = mPromptInfo.getAttemptWindowMs();
-        if (window <= 0) return;
-        recordProgress();
-        if (mAttemptWatchdog == null) mAttemptWatchdog = this::watchdogTick;
-        mUi.removeCallbacks(mAttemptWatchdog);
-        mUi.postDelayed(mAttemptWatchdog, window);
-    }
-    private void stopAttemptWatchdog() {
-        if (mAttemptWatchdog != null) mUi.removeCallbacks(mAttemptWatchdog);
-    }
-    private void watchdogTick() {
-        int window = mPromptInfo.getAttemptWindowMs();
-        if (window <= 0) return;
-        long now = SystemClock.uptimeMillis();
-        if (now - mLastEventAt >= window) {
-            Log.d(TAG, "attempt watchdog -> count as failed");
-            mAuthenticationCallback.onAuthenticationFailed();
-            return;
-        }
-        mUi.postDelayed(mAttemptWatchdog, window);
     }
 
     private void launchDeviceCredential() {
@@ -227,7 +192,6 @@ public class BiometricActivity extends AppCompatActivity {
                 .createConfirmDeviceCredentialIntent(mPromptInfo.getTitle(), mPromptInfo.getDescription());
         if (intent != null) {
             mLaunchingDeviceCredential = true; // already transitioning
-            stopAttemptWatchdog();
             this.startActivityForResult(intent, REQUEST_CODE_CONFIRM_DEVICE_CREDENTIALS);
         } else {
             finishWithError(PluginError.BIOMETRIC_UNKNOWN_ERROR);
@@ -247,7 +211,6 @@ public class BiometricActivity extends AppCompatActivity {
             mLaunchingDeviceCredential = false;
             mSuppressCancelError = false;
             mHandoffScheduled = false;
-            stopAttemptWatchdog();
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
@@ -262,7 +225,6 @@ public class BiometricActivity extends AppCompatActivity {
                 if (mSuppressCancelError || mLaunchingDeviceCredential) {
                     return;
                 } else {
-                    stopAttemptWatchdog();
                     finishWithError(PluginError.BIOMETRIC_DISMISSED);
                     return;
                 }
@@ -276,7 +238,6 @@ public class BiometricActivity extends AppCompatActivity {
                     scheduleHandoffToKeyguard();
                     return;
                 }
-                stopAttemptWatchdog();
                 finishWithError(PluginError.BIOMETRIC_DISMISSED);
                 return;
             case BiometricPrompt.ERROR_LOCKOUT:
@@ -286,15 +247,12 @@ public class BiometricActivity extends AppCompatActivity {
                     return;
                 }
                 if (errorCode == BiometricPrompt.ERROR_LOCKOUT) {
-                    stopAttemptWatchdog();
                     finishWithError(PluginError.BIOMETRIC_LOCKED_OUT.getValue(), errString.toString());
                 } else {
-                    stopAttemptWatchdog();
                     finishWithError(PluginError.BIOMETRIC_LOCKED_OUT_PERMANENT.getValue(), errString.toString());
                 }
                 return;
             default:
-                stopAttemptWatchdog();
                 finishWithError(errorCode, errString.toString());
         }
     }

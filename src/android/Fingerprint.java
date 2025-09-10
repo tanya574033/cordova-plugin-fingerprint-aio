@@ -93,6 +93,32 @@ public class Fingerprint extends CordovaPlugin {
         return type == BiometricActivityType.REGISTER_SECRET || type == BiometricActivityType.LOAD_SECRET;
     }
 
+    private JSONArray applyDefaultMaxAttempts(JSONArray args) {
+        int defaultAttempts = 5;
+        try {
+            PackageManager pm = cordova.getActivity().getPackageManager();
+            boolean hasFingerprint = pm.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT);
+            boolean hasFace = pm.hasSystemFeature("android.hardware.biometrics.face");
+            if (hasFace && !hasFingerprint) {
+                defaultAttempts = 3;
+            }
+            if (args == null) {
+                args = new JSONArray();
+            }
+            JSONObject obj;
+            if (args.length() > 0) {
+                obj = args.getJSONObject(0);
+            } else {
+                obj = new JSONObject();
+                args.put(obj);
+            }
+            if (!obj.has("maxAttempts")) {
+                obj.put("maxAttempts", defaultAttempts);
+            }
+        } catch (Exception ignored) {}
+        return args;
+    }
+
     private void runBiometricActivity(JSONArray args, BiometricActivityType type) {
         boolean requireStrongBiometrics = determineStrongBiometricsRequired(type);
         PluginError error = canAuthenticate(requireStrongBiometrics);
@@ -100,8 +126,9 @@ public class Fingerprint extends CordovaPlugin {
             sendError(error);
             return;
         }
+        final JSONArray finalArgs = applyDefaultMaxAttempts(args);
         cordova.getActivity().runOnUiThread(() -> {
-            mPromptInfoBuilder.parseArgs(args, type);
+            mPromptInfoBuilder.parseArgs(finalArgs, type);
             Intent intent = new Intent(cordova.getActivity().getApplicationContext(), BiometricActivity.class);
             intent.putExtras(mPromptInfoBuilder.build().getBundle());
             this.cordova.startActivityForResult(this, intent, REQUEST_CODE_BIOMETRIC);

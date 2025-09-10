@@ -9,7 +9,7 @@ export interface FingerprintOptions {
   description?: string;
   fallbackButtonTitle?: string;
   cancelButtonTitle?: string;
-  maxAttempts?: number; // Android: default 5, shared across modalities
+  maxAttempts?: number; // Android: default 5 for fingerprint, 3 for face
 }
 
 export interface FingerprintPlugin {
