@@ -121,7 +121,7 @@ Fingerprint.show({
 * __confirmationRequired__ (**Android**): If `false` user confirmation is NOT required after a biometric has been authenticated . Default: `true`. See [docs](https://developer.android.com/training/sign-in/biometric-auth#no-explicit-user-action).
 
 * __maxAttempts__ (**Android**): Maximum number of **biometric failures** allowed **across all modalities
-  in the same prompt** (e.g., fingerprint 3 + face 2 = 5). Defaults to **5**.
+  in the same prompt** (e.g., fingerprint 2 + face 2 = 4). **Fixed to 4** on Android.
   - If backup is enabled (`disableBackup:false`) and the limit is reached, the plugin cancels the
     biometric prompt and automatically opens the device credential screen (PIN/Pattern/Password).
   - If backup is disabled and the limit is reached, the plugin returns `BIOMETRIC_LOCKED_OUT`.
@@ -129,8 +129,10 @@ Fingerprint.show({
   Example:
   ```ts
   await FAIO.show({
-    clientId:'Demo', clientSecret:'secret',
-    disableBackup:false, maxAttempts:5
+    clientId:'Demo',
+    clientSecret:'secret',
+    disableBackup:false
+    // Note: maxAttempts is fixed to 4 on Android
   });
   ```
 
