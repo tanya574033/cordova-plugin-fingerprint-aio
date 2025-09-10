@@ -17,7 +17,6 @@ class PromptInfo {
     private static final String SECRET = "secret";
     private static final String BIOMETRIC_ACTIVITY_TYPE = "biometricActivityType";
     private static final String MAX_ATTEMPTS = "maxAttempts";
-    private static final String ATTEMPT_WINDOW_MS = "attemptWindowMs"; // Android-only optional
 
     static final String SECRET_EXTRA = "secret";
 
@@ -67,10 +66,6 @@ class PromptInfo {
         return bundle.containsKey(MAX_ATTEMPTS) ? bundle.getInt(MAX_ATTEMPTS) : 5;
     }
 
-    int getAttemptWindowMs() {
-        return bundle.containsKey(ATTEMPT_WINDOW_MS) ? bundle.getInt(ATTEMPT_WINDOW_MS) : 1200;
-    }
-
     BiometricActivityType getType() {
         return BiometricActivityType.fromValue(bundle.getInt(BIOMETRIC_ACTIVITY_TYPE));
     }
@@ -89,7 +84,6 @@ class PromptInfo {
         private String secret = null;
         private BiometricActivityType type = null;
         private int maxAttempts = 5;
-        private int attemptWindowMs = 1200; // default OFF
 
         Builder(String applicationLabel) {
             if (applicationLabel == null) {
@@ -123,7 +117,6 @@ class PromptInfo {
             bundle.putBoolean(INVALIDATE_ON_ENROLLMENT, this.invalidateOnEnrollment);
             bundle.putInt(BIOMETRIC_ACTIVITY_TYPE, this.type.getValue());
             bundle.putInt(MAX_ATTEMPTS, this.maxAttempts);
-            bundle.putInt(ATTEMPT_WINDOW_MS, this.attemptWindowMs);
             promptInfo.bundle = bundle;
 
             return promptInfo;
@@ -143,12 +136,6 @@ class PromptInfo {
             invalidateOnEnrollment = args.getBoolean(INVALIDATE_ON_ENROLLMENT, false);
             secret = args.getString(SECRET, null);
             maxAttempts = args.getInt(MAX_ATTEMPTS, maxAttempts);
-            // attemptWindowMs is optional; default 0 (disabled)
-            try {
-                if (jsonArgs != null && jsonArgs.length() > 0 && jsonArgs.getJSONObject(0).has(ATTEMPT_WINDOW_MS)) {
-                    attemptWindowMs = jsonArgs.getJSONObject(0).getInt(ATTEMPT_WINDOW_MS);
-                }
-            } catch (Exception ignored) {}
         }
     }
 }
