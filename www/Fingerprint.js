@@ -6,7 +6,7 @@ var Fingerprint = function() {
 function prepareParams (options) {
   options = options || {};
   if (typeof options.disableBackup === "undefined") options.disableBackup = false;
-  // maxAttempts default handled natively (fingerprint:5, face:3)
+  // maxAttempts default handled natively (5)
 
   // Android only customization
   if (!options.fallbackButtonTitle) options.fallbackButtonTitle = "Use backup";
