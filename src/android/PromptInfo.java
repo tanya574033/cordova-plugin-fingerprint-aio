@@ -63,7 +63,7 @@ class PromptInfo {
     }
 
     int getMaxAttempts() {
-        return bundle.containsKey(MAX_ATTEMPTS) ? bundle.getInt(MAX_ATTEMPTS) : 4;
+        return bundle.containsKey(MAX_ATTEMPTS) ? bundle.getInt(MAX_ATTEMPTS) : 5;
     }
 
     BiometricActivityType getType() {
@@ -83,7 +83,7 @@ class PromptInfo {
         private boolean invalidateOnEnrollment = false;
         private String secret = null;
         private BiometricActivityType type = null;
-        private int maxAttempts = 4;
+        private int maxAttempts = 5;
 
         Builder(String applicationLabel) {
             if (applicationLabel == null) {
