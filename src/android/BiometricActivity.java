@@ -149,7 +149,7 @@ public class BiometricActivity extends AppCompatActivity {
 
                 @Override
                 public void onAuthenticationFailed() {
-                    Log.d(TAG, "failed++ -> " + (mFailedAttempts+1) + " / limit=" + mPromptInfo.getMaxAttempts());
+                    Log.d(TAG, "failed++ -> " + (mFailedAttempts+1) + " / limit=" + mPromptInfo.getMaxAttempts() + " / window=" + mPromptInfo.getAttemptWindowMs());
                     
                     super.onAuthenticationFailed();
                     recordProgress();
