@@ -96,12 +96,6 @@ public class Fingerprint extends CordovaPlugin {
     private JSONArray applyDefaultMaxAttempts(JSONArray args) {
         int defaultAttempts = 5;
         try {
-            PackageManager pm = cordova.getActivity().getPackageManager();
-            boolean hasFingerprint = pm.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT);
-            boolean hasFace = pm.hasSystemFeature("android.hardware.biometrics.face");
-            if (hasFace && !hasFingerprint) {
-                defaultAttempts = 3;
-            }
             if (args == null) {
                 args = new JSONArray();
             }
