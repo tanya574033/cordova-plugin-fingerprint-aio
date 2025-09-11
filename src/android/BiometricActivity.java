@@ -115,6 +115,22 @@ public class BiometricActivity extends AppCompatActivity {
         return false;
     }
 
+    // Prefer a single primary modality: strong if present, else weak; add device credential when allowed.
+    private int pickAuthenticatorsSinglePrimary(boolean allowBackup) {
+        BiometricManager bm = BiometricManager.from(this);
+        int auth;
+        if (bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                == BiometricManager.BIOMETRIC_SUCCESS) {
+            auth = BiometricManager.Authenticators.BIOMETRIC_STRONG;
+        } else {
+            auth = BiometricManager.Authenticators.BIOMETRIC_WEAK;
+        }
+        if (allowBackup) {
+            auth |= BiometricManager.Authenticators.DEVICE_CREDENTIAL;
+        }
+        return auth;
+    }
+
     private BiometricPrompt.PromptInfo createPromptInfo() {
         BiometricPrompt.PromptInfo.Builder builder = new BiometricPrompt.PromptInfo.Builder()
                 .setTitle(mPromptInfo.getTitle())
@@ -127,18 +143,16 @@ public class BiometricActivity extends AppCompatActivity {
         boolean addNegative = true;
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            int authenticators;
             if (justAuth) {
-                authenticators = BiometricManager.Authenticators.BIOMETRIC_WEAK;
-                if (backup) {
-                    authenticators |= BiometricManager.Authenticators.DEVICE_CREDENTIAL;
+                int chosen = pickAuthenticatorsSinglePrimary(backup);
+                builder.setAllowedAuthenticators(chosen);
+                if ((chosen & BiometricManager.Authenticators.DEVICE_CREDENTIAL) != 0) {
                     addNegative = false;
                 }
             } else {
-                authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG;
+                builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG);
                 backup = false;
             }
-            builder.setAllowedAuthenticators(authenticators);
         } else {
             if (justAuth && backup && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // NOTE: This mode forbids a negative button.
