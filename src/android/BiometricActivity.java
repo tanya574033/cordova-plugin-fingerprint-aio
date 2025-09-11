@@ -11,6 +11,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.biometric.BiometricPrompt;
+import androidx.biometric.BiometricManager;
 import androidx.core.content.ContextCompat;
 import android.util.Log;
 
@@ -30,6 +31,9 @@ public class BiometricActivity extends AppCompatActivity {
     private boolean mSuppressCancelError = false; // ignore ERROR_CANCELED while we're handing off to Keyguard
     private int mFailedAttempts = 0; // counts both face + fingerprint failures
     private static final String TAG = "FAIO";
+    // compat for BiometricManager lockout codes (not in older library versions)
+    private static final int BM_ERROR_LOCKOUT = 7;
+    private static final int BM_ERROR_LOCKOUT_PERMANENT = 9;
     // Handoff guard (avoid double-Launching Keyguard)
     private boolean mHandoffScheduled = false;
     
@@ -84,6 +88,9 @@ public class BiometricActivity extends AppCompatActivity {
     }
 
     private void justAuthenticate() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R && precheckLegacyLockoutAndHandoffIfNeeded()) {
+            return;
+        }
         mBiometricPrompt.authenticate(createPromptInfo());
     }
 
@@ -94,27 +101,61 @@ public class BiometricActivity extends AppCompatActivity {
         mBiometricPrompt.authenticate(createPromptInfo(), new BiometricPrompt.CryptoObject(cipher));
     }
 
+    private boolean precheckLegacyLockoutAndHandoffIfNeeded() {
+        if (!mPromptInfo.isDeviceCredentialAllowed()) {
+            return false;
+        }
+        BiometricManager bm = BiometricManager.from(this);
+        int res = bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK);
+        if (res == BM_ERROR_LOCKOUT || res == BM_ERROR_LOCKOUT_PERMANENT) {
+            Log.d(TAG, "precheck: locked out -> handoff to Keyguard");
+            scheduleHandoffToKeyguard();
+            return true;
+        }
+        return false;
+    }
+
     private BiometricPrompt.PromptInfo createPromptInfo() {
-        BiometricPrompt.PromptInfo.Builder promptInfoBuilder = new BiometricPrompt.PromptInfo.Builder()
+        BiometricPrompt.PromptInfo.Builder builder = new BiometricPrompt.PromptInfo.Builder()
                 .setTitle(mPromptInfo.getTitle())
                 .setSubtitle(mPromptInfo.getSubtitle())
                 .setConfirmationRequired(mPromptInfo.getConfirmationRequired())
                 .setDescription(mPromptInfo.getDescription());
 
-        if (mPromptInfo.isDeviceCredentialAllowed()
-                && mPromptInfo.getType() == BiometricActivityType.JUST_AUTHENTICATE
-                && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            // NOTE: This mode forbids a negative button.
-            //noinspection deprecation
-            promptInfoBuilder.setDeviceCredentialAllowed(true);
+        boolean backup = mPromptInfo.isDeviceCredentialAllowed();
+        boolean justAuth = mPromptInfo.getType() == BiometricActivityType.JUST_AUTHENTICATE;
+        boolean addNegative = true;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            int authenticators;
+            if (justAuth) {
+                authenticators = BiometricManager.Authenticators.BIOMETRIC_WEAK;
+                if (backup) {
+                    authenticators |= BiometricManager.Authenticators.DEVICE_CREDENTIAL;
+                    addNegative = false;
+                }
+            } else {
+                authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG;
+                backup = false;
+            }
+            builder.setAllowedAuthenticators(authenticators);
         } else {
-            String negativeText = mPromptInfo.isDeviceCredentialAllowed()
-                    ? mPromptInfo.getFallbackButtonTitle()
-                    : mPromptInfo.getCancelButtonTitle();
-            promptInfoBuilder.setNegativeButtonText(negativeText);
+            if (justAuth && backup && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // NOTE: This mode forbids a negative button.
+                //noinspection deprecation
+                builder.setDeviceCredentialAllowed(true);
+                addNegative = false;
+            }
         }
 
-        return promptInfoBuilder.build();
+        if (addNegative) {
+            String negativeText = backup
+                    ? mPromptInfo.getFallbackButtonTitle()
+                    : mPromptInfo.getCancelButtonTitle();
+            builder.setNegativeButtonText(negativeText);
+        }
+
+        return builder.build();
     }
 
     private BiometricPrompt.AuthenticationCallback mAuthenticationCallback =
