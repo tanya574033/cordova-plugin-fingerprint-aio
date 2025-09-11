@@ -11,6 +11,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.biometric.BiometricPrompt;
+import androidx.biometric.BiometricManager;
 import androidx.core.content.ContextCompat;
 import android.util.Log;
 
@@ -32,6 +33,26 @@ public class BiometricActivity extends AppCompatActivity {
     private static final String TAG = "FAIO";
     // Handoff guard (avoid double-Launching Keyguard)
     private boolean mHandoffScheduled = false;
+
+    private final long attemptWindowMs = 10000L; // conservative for face
+    private final Runnable mWatchdog = () -> {
+        Log.d(TAG, "watchdog -> schedule handoff to Keyguard");
+        if (mPromptInfo.isDeviceCredentialAllowed()) {
+            scheduleHandoffToKeyguard();
+        } else {
+            finishWithError(PluginError.BIOMETRIC_LOCKED_OUT);
+        }
+    };
+
+    private void resetWatchdog() {
+        if (attemptWindowMs <= 0) return;
+        mUi.removeCallbacks(mWatchdog);
+        mUi.postDelayed(mWatchdog, attemptWindowMs);
+    }
+
+    private void stopWatchdog() {
+        mUi.removeCallbacks(mWatchdog);
+    }
     
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -95,56 +116,66 @@ public class BiometricActivity extends AppCompatActivity {
     }
 
     private BiometricPrompt.PromptInfo createPromptInfo() {
-        BiometricPrompt.PromptInfo.Builder promptInfoBuilder = new BiometricPrompt.PromptInfo.Builder()
-                .setTitle(mPromptInfo.getTitle())
-                .setSubtitle(mPromptInfo.getSubtitle())
-                .setConfirmationRequired(mPromptInfo.getConfirmationRequired())
-                .setDescription(mPromptInfo.getDescription());
+        BiometricPrompt.PromptInfo.Builder b = new BiometricPrompt.PromptInfo.Builder()
+            .setTitle(mPromptInfo.getTitle())
+            .setSubtitle(mPromptInfo.getSubtitle())
+            .setConfirmationRequired(mPromptInfo.getConfirmationRequired())
+            .setDescription(mPromptInfo.getDescription());
 
-        if (mPromptInfo.isDeviceCredentialAllowed()
-                && mPromptInfo.getType() == BiometricActivityType.JUST_AUTHENTICATE
-                && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            // NOTE: This mode forbids a negative button.
-            //noinspection deprecation
-            promptInfoBuilder.setDeviceCredentialAllowed(true);
-        } else {
-            String negativeText = mPromptInfo.isDeviceCredentialAllowed()
-                    ? mPromptInfo.getFallbackButtonTitle()
-                    : mPromptInfo.getCancelButtonTitle();
-            promptInfoBuilder.setNegativeButtonText(negativeText);
+        boolean allowBackup = mPromptInfo.isDeviceCredentialAllowed()
+                && mPromptInfo.getType() == BiometricActivityType.JUST_AUTHENTICATE;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            int allowed;
+            if (mPromptInfo.getType() == BiometricActivityType.JUST_AUTHENTICATE) {
+                // ✅ Use WEAK so Face (Class-2) and Fingerprint (Class-3) are both eligible.
+                allowed = BiometricManager.Authenticators.BIOMETRIC_WEAK;
+                if (allowBackup) {
+                    allowed |= BiometricManager.Authenticators.DEVICE_CREDENTIAL;
+                }
+            } else {
+                // Crypto flows: STRONG only. Do NOT add DEVICE_CREDENTIAL with CryptoObject.
+                allowed = BiometricManager.Authenticators.BIOMETRIC_STRONG;
+            }
+            b.setAllowedAuthenticators(allowed);
+
+            // Only set negative if DEVICE_CREDENTIAL is NOT present
+            boolean hasCredential = (allowed & BiometricManager.Authenticators.DEVICE_CREDENTIAL) != 0;
+            if (!hasCredential && mPromptInfo.getType() == BiometricActivityType.JUST_AUTHENTICATE) {
+                b.setNegativeButtonText(mPromptInfo.getCancelButtonTitle());
+            }
+            return b.build();
         }
 
-        return promptInfoBuilder.build();
+        // Android 10 (Q)
+        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+            if (allowBackup) {
+                //noinspection deprecation
+                b.setDeviceCredentialAllowed(true); // No negative button
+            } else {
+                b.setNegativeButtonText(mPromptInfo.getCancelButtonTitle());
+            }
+            return b.build();
+        }
+
+        // Android 9 (P) and below: legacy negative-button flow
+        if (allowBackup) {
+            b.setNegativeButtonText(mPromptInfo.getFallbackButtonTitle());
+        } else {
+            b.setNegativeButtonText(mPromptInfo.getCancelButtonTitle());
+        }
+        return b.build();
     }
 
     private BiometricPrompt.AuthenticationCallback mAuthenticationCallback =
             new BiometricPrompt.AuthenticationCallback() {
 
                 @Override
-                public void onAuthenticationError(int errorCode, @NonNull CharSequence errString) {
-                        Log.d(TAG, "onError code=" + errorCode + " msg=" + String.valueOf(errString)
-                                + " launchingKeyguard=" + mLaunchingDeviceCredential
-                                + " suppress=" + mSuppressCancelError);
-                    super.onAuthenticationError(errorCode, errString);
-                    onError(errorCode, errString);
-                }
-
-                @Override
-                public void onAuthenticationSucceeded(@NonNull BiometricPrompt.AuthenticationResult result) {
-                    super.onAuthenticationSucceeded(result);
-                    try {
-                        finishWithSuccess(result.getCryptoObject());
-                    } catch (CryptoException e) {
-                        finishWithError(e);
-                    }
-                }
-
-                @Override
                 public void onAuthenticationFailed() {
                     Log.d(TAG, "failed++ -> " + (mFailedAttempts+1) + " / limit=" + mPromptInfo.getMaxAttempts());
-
                     super.onAuthenticationFailed();
                     mFailedAttempts++;
+                    resetWatchdog(); // arm after first real signal
                     int limit = mPromptInfo.getMaxAttempts();
                     if (limit > 0 && mFailedAttempts >= limit) {
                         Log.d(TAG, "limit reached -> schedule handoff to Keyguard");
@@ -155,20 +186,88 @@ public class BiometricActivity extends AppCompatActivity {
                         }
                     }
                 }
+
+                @Override
+                public void onAuthenticationSucceeded(@NonNull BiometricPrompt.AuthenticationResult result) {
+                    super.onAuthenticationSucceeded(result);
+                    stopWatchdog();
+                    try {
+                        finishWithSuccess(result.getCryptoObject());
+                    } catch (CryptoException e) {
+                        finishWithError(e);
+                    }
+                }
+
+                @Override
+                public void onAuthenticationError(int errorCode, @NonNull CharSequence errString) {
+                    Log.d(TAG, "onError code=" + errorCode + " msg=" + errString
+                            + " launchingKeyguard=" + mLaunchingDeviceCredential
+                            + " suppress=" + mSuppressCancelError);
+                    super.onAuthenticationError(errorCode, errString);
+                    stopWatchdog();
+
+                    switch (errorCode) {
+                        case BiometricPrompt.ERROR_USER_CANCELED:
+                        case BiometricPrompt.ERROR_CANCELED:
+                            if (mSuppressCancelError || mLaunchingDeviceCredential) return;
+                            finishWithError(PluginError.BIOMETRIC_DISMISSED);
+                            return;
+
+                        case BiometricPrompt.ERROR_TIMEOUT:
+                            // Treat as soft failure to progress toward fallback (helps Face).
+                            Log.d(TAG, "timeout -> count as failed");
+                            mFailedAttempts++;
+                            int limit = mPromptInfo.getMaxAttempts();
+                            if (limit > 0 && mFailedAttempts >= limit) {
+                                if (mPromptInfo.isDeviceCredentialAllowed()) {
+                                    scheduleHandoffToKeyguard();
+                                } else {
+                                    finishWithError(PluginError.BIOMETRIC_LOCKED_OUT);
+                                }
+                                return;
+                            }
+                            resetWatchdog(); // re-arm while still in attempt window
+                            return;
+
+                        case BiometricPrompt.ERROR_LOCKOUT:
+                        case BiometricPrompt.ERROR_LOCKOUT_PERMANENT:
+                            if (mPromptInfo.isDeviceCredentialAllowed()) {
+                                scheduleHandoffToKeyguard();
+                                return;
+                            }
+                            if (errorCode == BiometricPrompt.ERROR_LOCKOUT) {
+                                finishWithError(PluginError.BIOMETRIC_LOCKED_OUT.getValue(), errString.toString());
+                            } else {
+                                finishWithError(PluginError.BIOMETRIC_LOCKED_OUT_PERMANENT.getValue(), errString.toString());
+                            }
+                            return;
+
+                        case BiometricPrompt.ERROR_NEGATIVE_BUTTON:
+                            if (mPromptInfo.isDeviceCredentialAllowed()) {
+                                scheduleHandoffToKeyguard();
+                                return;
+                            }
+                            finishWithError(PluginError.BIOMETRIC_DISMISSED);
+                            return;
+
+                        default:
+                            finishWithError(errorCode, errString.toString());
+                    }
+                }
             };
 
     /** Dismiss BiometricPrompt and reliably launch Keyguard (PIN/Pattern/Password), avoiding double-launch. */
     private void scheduleHandoffToKeyguard() {
         if (mHandoffScheduled) return;
+        stopWatchdog();
         mHandoffScheduled = true;
         mSuppressCancelError = true;
         try { mBiometricPrompt.cancelAuthentication(); } catch (Exception ignored) {}
-        // Primary attempt after short delay to let the prompt dismiss
+
         mUi.postDelayed(() -> {
             Log.d(TAG, "handoff->Keyguard t1");
             if (!mLaunchingDeviceCredential) launchDeviceCredential();
         }, 400);
-        // Safety attempt in case some OEM face UIs are sticky
         mUi.postDelayed(() -> {
             Log.d(TAG, "handoff->Keyguard t2");
             if (!mLaunchingDeviceCredential) launchDeviceCredential();
@@ -214,47 +313,6 @@ public class BiometricActivity extends AppCompatActivity {
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
-    }
-
-    private void onError(int errorCode, @NonNull CharSequence errString) {
-
-        switch (errorCode) {
-            case BiometricPrompt.ERROR_USER_CANCELED:
-            case BiometricPrompt.ERROR_CANCELED:
-                // If we intentionally canceled to launch Keyguard, ignore this edge callback.
-                if (mSuppressCancelError || mLaunchingDeviceCredential) {
-                    return;
-                } else {
-                    finishWithError(PluginError.BIOMETRIC_DISMISSED);
-                    return;
-                }
-            case BiometricPrompt.ERROR_TIMEOUT:
-                // Count face timeouts as failed attempts to progress toward fallback
-                Log.d(TAG, "timeout -> count as failed");
-                mAuthenticationCallback.onAuthenticationFailed();
-                return;
-            case BiometricPrompt.ERROR_NEGATIVE_BUTTON:
-                if (mPromptInfo.isDeviceCredentialAllowed()) {
-                    scheduleHandoffToKeyguard();
-                    return;
-                }
-                finishWithError(PluginError.BIOMETRIC_DISMISSED);
-                return;
-            case BiometricPrompt.ERROR_LOCKOUT:
-            case BiometricPrompt.ERROR_LOCKOUT_PERMANENT:
-                if (mPromptInfo.isDeviceCredentialAllowed()) {
-                    scheduleHandoffToKeyguard();
-                    return;
-                }
-                if (errorCode == BiometricPrompt.ERROR_LOCKOUT) {
-                    finishWithError(PluginError.BIOMETRIC_LOCKED_OUT.getValue(), errString.toString());
-                } else {
-                    finishWithError(PluginError.BIOMETRIC_LOCKED_OUT_PERMANENT.getValue(), errString.toString());
-                }
-                return;
-            default:
-                finishWithError(errorCode, errString.toString());
-        }
     }
 
     private void finishWithSuccess() {
