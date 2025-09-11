@@ -71,6 +71,10 @@ public class BiometricActivity extends AppCompatActivity {
         final Handler handler = new Handler(Looper.getMainLooper());
         Executor executor = handler::post;
         mBiometricPrompt = new BiometricPrompt(this, executor, mAuthenticationCallback);
+        // Q / ≤P: if sensor is already in lockout (after prior failures), go straight to PIN.
+        if (precheckLockoutLegacy()) {
+            return;
+        }
         try {
             authenticate();
         } catch (CryptoException e) {
@@ -167,6 +171,36 @@ public class BiometricActivity extends AppCompatActivity {
         return b.build();
     }
 
+    /**
+     * Only allow device-credential fallback for JUST_AUTHENTICATE when backup is enabled.
+     * Crypto flows must not fall back to credential.
+     */
+    private boolean canUseCredentialFallback() {
+        return mPromptInfo.isDeviceCredentialAllowed()
+                && mPromptInfo.getType() == BiometricActivityType.JUST_AUTHENTICATE;
+    }
+
+    /**
+     * On Android 10 (Q) and below, some OEM UIs show "too many attempts" without emitting ERROR_LOCKOUT.
+     * If we detect lockout and backup is allowed, hand off to Keyguard immediately.
+     * On R+ the framework routes inline; no pre-check needed.
+     */
+    private boolean precheckLockoutLegacy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) return false;
+        if (!mPromptInfo.isDeviceCredentialAllowed()) return false;
+        try {
+            int status = BiometricManager.from(this).canAuthenticate(); // legacy API
+            if (status == BiometricManager.BIOMETRIC_ERROR_LOCKOUT
+                    || status == BiometricManager.BIOMETRIC_ERROR_LOCKOUT_PERMANENT) {
+                scheduleHandoffToKeyguard();
+                return true;
+            }
+        } catch (Throwable t) {
+            Log.d(TAG, "precheckLockoutLegacy() ignored: " + t.getMessage());
+        }
+        return false;
+    }
+
     private BiometricPrompt.AuthenticationCallback mAuthenticationCallback =
             new BiometricPrompt.AuthenticationCallback() {
 
@@ -258,6 +292,11 @@ public class BiometricActivity extends AppCompatActivity {
 
     /** Dismiss BiometricPrompt and reliably launch Keyguard (PIN/Pattern/Password), avoiding double-launch. */
     private void scheduleHandoffToKeyguard() {
+        // Only JUST_AUTHENTICATE with backup may use credential fallback.
+        if (!canUseCredentialFallback()) {
+            finishWithError(PluginError.BIOMETRIC_LOCKED_OUT);
+            return;
+        }
         if (mHandoffScheduled) return;
         stopWatchdog();
         mHandoffScheduled = true;
