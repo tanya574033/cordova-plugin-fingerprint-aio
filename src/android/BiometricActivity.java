@@ -31,6 +31,9 @@ public class BiometricActivity extends AppCompatActivity {
     private boolean mSuppressCancelError = false; // ignore ERROR_CANCELED while we're handing off to Keyguard
     private int mFailedAttempts = 0; // counts both face + fingerprint failures
     private static final String TAG = "FAIO";
+    // compat for BiometricManager lockout codes (not in older library versions)
+    private static final int BM_ERROR_LOCKOUT = 7;
+    private static final int BM_ERROR_LOCKOUT_PERMANENT = 9;
     // Handoff guard (avoid double-Launching Keyguard)
     private boolean mHandoffScheduled = false;
     
@@ -104,8 +107,7 @@ public class BiometricActivity extends AppCompatActivity {
         }
         BiometricManager bm = BiometricManager.from(this);
         int res = bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK);
-        if (res == BiometricManager.BIOMETRIC_ERROR_LOCKOUT
-                || res == BiometricManager.BIOMETRIC_ERROR_LOCKOUT_PERMANENT) {
+        if (res == BM_ERROR_LOCKOUT || res == BM_ERROR_LOCKOUT_PERMANENT) {
             Log.d(TAG, "precheck: locked out -> handoff to Keyguard");
             scheduleHandoffToKeyguard();
             return true;
